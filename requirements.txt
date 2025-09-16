@@ -1,3 +1,6 @@
 streamlit
 transformers
-torch
+sentence-transformers
+pinecone-client
+torch # Added as transformers often requires a deep learning framework
+numpy # Added as sentence-transformers uses numpy

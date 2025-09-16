@@ -8,12 +8,15 @@ import os
 import glob
 import re
 import logging
-from google.colab import userdata # Used only in Colab for API key access
+# from google.colab import userdata # Used only in Colab for API key access - REMOVE THIS LINE
 
 # Configure logging (optional, but good practice)
 logging.basicConfig(level=logging.INFO)
 
 # --- Load and preprocess mental health and CBT data ---
+# In a real deployment, you might want to load this data and upsert it to Pinecone
+# as a separate script run once, rather than every time the Streamlit app starts.
+# For this consolidated script, we'll keep the function but note this for optimization.
 def load_and_preprocess_data(directory):
     """
     Reads text files from a directory and preprocesses their content.
@@ -25,7 +28,12 @@ def load_and_preprocess_data(directory):
         list: A list of strings, where each string is the preprocessed content of a file.
     """
     documents = []
-    filepaths = glob.glob(os.path.join(directory, "*.txt")) # Read all .txt files
+    # Assuming the 'mental_health_data' directory exists in the deployment environment
+    data_dir_path = directory
+    filepaths = glob.glob(os.path.join(data_dir_path, "*.txt")) # Read all .txt files
+
+    if not filepaths:
+        logging.warning(f"No .txt files found in {data_dir_path}. Please ensure your data is in this directory.")
 
     for filepath in filepaths:
         try:
@@ -47,6 +55,7 @@ def load_and_preprocess_data(directory):
 
     return documents
 
+
 # --- Choose and implement an embedding model ---
 @st.cache_resource # Cache the embedding model
 def load_embedding_model():
@@ -67,20 +76,21 @@ if embedding_model is None:
 
 
 # --- Set up a vector database (Pinecone) ---
+# This function will also handle upserting data if the index is new or empty.
 @st.cache_resource # Cache the Pinecone connection and index
-def setup_pinecone():
-    """Initializes Pinecone and connects to the index."""
+def setup_pinecone_and_upsert(_documents, _embedding_model):
+    """Initializes Pinecone, connects to the index, and upserts data if needed."""
+    index = None # Initialize index to None
     try:
-        # In a deployed environment, get API key from environment variables or secrets
-        # In Colab, we use userdata.get('PINECONE_API_KEY')
-        # Replace with os.environ.get('PINECONE_API_KEY') in deployment
-        PINECONE_API_KEY = os.environ.get('PINECONE_API_KEY') or userdata.get('PINECONE_API_KEY')
-
+        # In a deployed environment, get API key from environment variables
+        PINECONE_API_KEY = os.environ.get('PINECONE_API_KEY')
+        PINECONE_ENVIRONMENT = os.environ.get('PINECONE_ENVIRONMENT', 'us-east-1-aws') # Get environment or default
 
         if not PINECONE_API_KEY:
-             raise ValueError("Pinecone API key not found. Set PINECONE_API_KEY environment variable or Colab secret.")
+             raise ValueError("Pinecone API key not found. Set PINECONE_API_KEY environment variable.")
 
-        pc = Pinecone(api_key=PINECONE_API_KEY)
+        # Initialize Pinecone with API key and environment
+        pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT) # Use environment parameter
         logging.info("Pinecone initialized successfully!")
 
         index_name = "mental-health-rag"
@@ -100,31 +110,59 @@ def setup_pinecone():
 
         index = pc.Index(index_name)
         logging.info(f"Connected to index '{index_name}'.")
+
+        # Check if the index is empty and upsert data if needed
+        index_stats = index.describe_index_stats()
+        if index_stats.total_vector_count == 0 and _documents:
+             logging.info("Index is empty. Preparing and upserting data...")
+             data_to_upsert = []
+             for i, (doc_text, doc_embedding) in enumerate(zip(_documents, _embedding_model.encode(_documents))):
+                 doc_id = f"doc_{i}"
+                 metadata = {"text": doc_text}
+                 data_to_upsert.append((doc_id, doc_embedding.tolist(), metadata))
+
+             batch_size = 100 # Adjust batch size
+             for i in range(0, len(data_to_upsert), batch_size):
+                 batch = data_to_upsert[i:i + batch_size]
+                 index.upsert(vectors=batch)
+                 logging.info(f"Upserted batch {i // batch_size + 1}/{(len(data_to_upsert) + batch_size - 1) // batch_size}")
+             logging.info("Data upsert complete.")
+        elif index_stats.total_vector_count > 0:
+             logging.info(f"Index already contains {index_stats.total_vector_count} vectors. Skipping upsert.")
+        else:
+            logging.warning("No documents to upsert and index is empty.")
+
+
         return index
 
     except Exception as e:
-        logging.error(f"Error setting up Pinecone: {e}")
-        return None
+        logging.error(f"Error setting up Pinecone or upserting data: {e}")
+        return None # Return None if setup fails
 
-index = setup_pinecone()
+# Load documents and setup Pinecone (including upsert if needed)
+# In a real application, consider running upsert as a separate process.
+# For this consolidated app, we'll load docs and then setup/upsert Pinecone.
+mental_health_documents = load_and_preprocess_data("mental_health_data")
+index = setup_pinecone_and_upsert(mental_health_documents, embedding_model)
+
 
 if index is None:
-    st.error("Could not connect to Pinecone index. Please check your API key and index details.")
+    st.error("Could not set up Pinecone index or upsert data. Please check your API key, environment, and data.")
     st.stop()
 
 # --- Implement the retrieval mechanism ---
-def retrieve_info(query, index, embedding_model, top_k=3):
+def retrieve_info(query, _index, _embedding_model, top_k=3):
     """
     Retrieves relevant information from the Pinecone index based on a user query.
     """
-    if index is None or embedding_model is None:
+    if _index is None or _embedding_model is None:
         logging.warning("Pinecone index or embedding model not available for retrieval.")
         return []
 
     try:
-        query_embedding = embedding_model.encode(query).tolist()
+        query_embedding = _embedding_model.encode(query).tolist()
 
-        search_results = index.query(
+        search_results = _index.query(
             vector=query_embedding,
             top_k=top_k,
             include_metadata=True
@@ -188,9 +226,10 @@ def generate_response(user_input, history=None, retrieved_info=None):
     """
     Generates a response using the loaded text generation model, incorporating retrieved information.
     """
-    if text_generator is None:
-         logging.error("Text generator model not loaded.")
-         return "I'm sorry, the conversation model is not available.", history
+    # Assuming text_generator is loaded and available globally or via st.cache_resource
+    if text_generator is None: # Added check
+         logging.error("Text generator model not loaded.") # Added logging
+         return "I'm sorry, the conversation model is not available.", history # Added graceful exit
 
 
     if history is None:
@@ -210,11 +249,16 @@ def generate_response(user_input, history=None, retrieved_info=None):
     # We need to format the history appropriately for the LLM (e.g., turn-by-turn)
     # For DialoGPT, appending with EOS tokens is suitable.
     prompt_parts.append(history)
-    prompt_parts.append("User: " + user_input + text_generator.tokenizer.eos_token) # Add current user input
+    prompt_parts.append("User: " + text_generator.tokenizer.eos_token + user_input + text_generator.tokenizer.eos_token) # Add current user input with EOS tokens
+
 
     full_input = "".join(prompt_parts)
 
     try:
+        # Find the index of the start of the user input in the full prompt
+        # This is needed to correctly extract the bot's response later
+        user_input_start_index_in_full_input = full_input.find("User: " + text_generator.tokenizer.eos_token + user_input)
+
         generated_sequence = text_generator(
             full_input,
             max_length=len(full_input) + 100,  # Generate up to 100 new tokens (increased for potentially longer RAG responses)
@@ -229,13 +273,13 @@ def generate_response(user_input, history=None, retrieved_info=None):
 
         generated_text = generated_sequence[0]['generated_text']
 
-        # Extract the generated text. The output includes the input prompt, so we need to remove it.
-        # We also need to remove the EOS token if it's at the end.
-        # Find the index of the first occurrence of the EOS token after the input
-        # Need to be careful here, the prompt includes history and potentially context
-        # A simpler approach for DialoGPT is to find the response after the last EOS token from the input
-        response_start_index = generated_text.rfind(text_generator.tokenizer.eos_token) + len(text_generator.tokenizer.eos_token)
+        # Extract the generated text that comes AFTER the user's input in the generated sequence.
+        # This is the bot's response.
+        # We need to find the part of the generated text that is after the *end* of our initial full_input.
+        # A robust way for DialoGPT is to find the content after the last EOS token that was part of the input.
+        response_start_index = generated_text.rfind(text_generator.tokenizer.eos_token, 0, len(full_input)) + len(text_generator.tokenizer.eos_token)
         response = generated_text[response_start_index:].strip()
+
 
         # Basic safety check on the generated response
         unsafe_keywords = ["kill", "suicide", "harm yourself", "end my life", "unalive myself"] # Add more keywords as needed
@@ -260,8 +304,9 @@ def assess_severity(user_input):
     Assesses the severity of the user's mental health state based on input text.
     Enhanced to be more sensitive to high severity keywords.
     """
-    if sentiment_analyzer is None:
-        logging.warning("Sentiment analyzer not loaded, cannot assess severity.")
+    # Assuming sentiment_analyzer is loaded and available globally or via st.cache_resource
+    if sentiment_analyzer is None: # Added check
+        logging.warning("Sentiment analyzer not loaded, cannot assess severity.") # Added logging
         return 'low' # Cannot assess if analyzer not loaded
 
     # Define keywords indicating higher severity - include variations
@@ -344,7 +389,7 @@ if prompt := st.chat_input("What is on your mind today?"):
         st.markdown(prompt)
 
     # Assess the severity of the user's input immediately
-    severity = assess_severity(prompt)
+    severity = assess_severity(prompt,_sentiment_analyzer)
 
     # Handle high severity input specifically
     if severity == 'high':
@@ -359,6 +404,7 @@ if prompt := st.chat_input("What is on your mind today?"):
             with st.spinner("Thinking..."):
                 # --- RAG Integration ---
                 # Retrieve relevant information based on the user's prompt
+                # Pass _index and _embedding_model to retrieve_info
                 retrieved_docs = retrieve_info(prompt, index, embedding_model)
                 if retrieved_docs:
                     logging.info(f"Retrieved {len(retrieved_docs)} documents.")
@@ -367,6 +413,7 @@ if prompt := st.chat_input("What is on your mind today?"):
                     logging.info("No relevant documents retrieved.")
 
                 # Generate response using the LLM, including retrieved information
+                # Pass text_generator to generate_response
                 response_text, st.session_state.conversation_history = generate_response(
                     prompt,
                     st.session_state.conversation_history,

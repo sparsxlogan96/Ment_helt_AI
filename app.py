@@ -4,7 +4,7 @@ import streamlit as st
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM # Import necessary classes
 from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec # Import Pinecone and ServerlessSpec
-from pinecone.core.grpc.exceptions import GRPCStatusError # Import GRPCStatusError from the correct module
+#from pinecone.core.grpc.exceptions import GRPCStatusError # Import GRPCStatusError from the correct module
 import os
 import glob
 import re
@@ -501,3 +501,4 @@ if prompt := st.chat_input("What is on your mind today?"):
 # You will also need to create the 'mental_health_data' directory and add your text files there,
 # then run a separate script (or add code to this script, run once) to embed and upsert
 # the documents to Pinecone before running the Streamlit app for the first time.
+

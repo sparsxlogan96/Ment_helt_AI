@@ -3,7 +3,7 @@
 import streamlit as st
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM # Import necessary classes
 from sentence_transformers import SentenceTransformer
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone, ServerlessSpec, GRPCStatusError # Import GRPCStatusError for specific handling
 import os
 import glob
 import re
@@ -87,68 +87,121 @@ def setup_pinecone_and_upsert(_documents, _embedding_model):
         PINECONE_ENVIRONMENT = os.environ.get('PINECONE_ENVIRONMENT', 'us-east-1-aws') # Get environment or default
 
         if not PINECONE_API_KEY:
-             raise ValueError("Pinecone API key not found. Set PINECONE_API_KEY environment variable.")
+             logging.error("Pinecone API key not found. Set PINECONE_API_KEY environment variable.")
+             st.error("Pinecone API key not found. Please set the PINECONE_API_KEY environment variable.")
+             return None
 
         # Initialize Pinecone with API key and environment
-        pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT) # Use environment parameter
-        logging.info("Pinecone initialized successfully!")
+        try:
+            pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT) # Use environment parameter
+            logging.info("Pinecone initialized successfully!")
+        except Exception as e:
+            logging.error(f"Error initializing Pinecone. Check API key and environment: {e}")
+            st.error(f"Error initializing Pinecone. Please check your API key and environment: {e}")
+            return None
+
 
         index_name = "mental-health-rag"
         embedding_dimension = 384 # Dimension of 'all-MiniLM-L6-v2'
 
-        if index_name not in pc.list_indexes().names:
-             logging.info(f"Creating index '{index_name}'...")
-             pc.create_index(
-                name=index_name,
-                dimension=embedding_dimension,
-                metric="cosine",
-                spec=ServerlessSpec(cloud="aws", region="us-east-1") # Adjust as needed
-            )
-             logging.info(f"Index '{index_name}' created.")
-        else:
-             logging.info(f"Index '{index_name}' already exists.")
+        # Check if index exists, create if not
+        try:
+            if index_name not in pc.list_indexes().names:
+                 logging.info(f"Creating index '{index_name}'...")
+                 st.info(f"Creating Pinecone index '{index_name}'. This may take a moment...")
+                 pc.create_index(
+                    name=index_name,
+                    dimension=embedding_dimension,
+                    metric="cosine",
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1") # Adjust as needed
+                )
+                 logging.info(f"Index '{index_name}' created.")
+                 st.success(f"Pinecone index '{index_name}' created.")
+            else:
+                 logging.info(f"Index '{index_name}' already exists.")
+                 st.info(f"Pinecone index '{index_name}' already exists. Connecting...")
 
-        index = pc.Index(index_name)
-        logging.info(f"Connected to index '{index_name}'.")
+            index = pc.Index(index_name)
+            logging.info(f"Connected to index '{index_name}'.")
+            st.success(f"Connected to Pinecone index '{index_name}'.")
+
+        except Exception as e:
+            logging.error(f"Error creating or connecting to Pinecone index: {e}")
+            st.error(f"Error creating or connecting to Pinecone index: {e}")
+            return None
+
 
         # Check if the index is empty and upsert data if needed
-        index_stats = index.describe_index_stats()
-        if index_stats.total_vector_count == 0 and _documents:
-             logging.info("Index is empty. Preparing and upserting data...")
-             data_to_upsert = []
-             for i, (doc_text, doc_embedding) in enumerate(zip(_documents, _embedding_model.encode(_documents))):
-                 doc_id = f"doc_{i}"
-                 metadata = {"text": doc_text}
-                 data_to_upsert.append((doc_id, doc_embedding.tolist(), metadata))
+        try:
+            index_stats = index.describe_index_stats()
+            if index_stats.total_vector_count == 0 and _documents:
+                 logging.info("Index is empty. Preparing and upserting data...")
+                 st.info("Pinecone index is empty. Uploading mental health data...")
 
-             batch_size = 100 # Adjust batch size
-             for i in range(0, len(data_to_upsert), batch_size):
-                 batch = data_to_upsert[i:i + batch_size]
-                 index.upsert(vectors=batch)
-                 logging.info(f"Upserted batch {i // batch_size + 1}/{(len(data_to_upsert) + batch_size - 1) // batch_size}")
-             logging.info("Data upsert complete.")
-        elif index_stats.total_vector_count > 0:
-             logging.info(f"Index already contains {index_stats.total_vector_count} vectors. Skipping upsert.")
-        else:
-            logging.warning("No documents to upsert and index is empty.")
+                 # --- Debugging: Log types before embedding ---
+                 logging.info(f"Type of _documents: {type(_documents)}")
+                 if isinstance(_documents, list):
+                     logging.info(f"Number of documents: {len(_documents)}")
+                     if _documents:
+                         logging.info(f"Type of first document: {type(_documents[0])}")
+                         logging.info(f"Content of first document (first 100 chars): {_documents[0][:100]}...")
+                 logging.info(f"Type of _embedding_model: {type(_embedding_model)}")
+                 # --- End Debugging ---
+
+
+                 data_to_upsert = []
+                 # Explicitly call the encode method on the embedding model
+                 document_embeddings = _embedding_model.encode(_documents)
+
+                 for i, (doc_text, doc_embedding) in enumerate(zip(_documents, document_embeddings)):
+                     doc_id = f"doc_{i}"
+                     metadata = {"text": doc_text}
+                     data_to_upsert.append((doc_id, doc_embedding.tolist(), metadata))
+
+                 batch_size = 100 # Adjust batch size
+                 for i in range(0, len(data_to_upsert), batch_size):
+                     batch = data_to_upsert[i:i + batch_size]
+                     index.upsert(vectors=batch)
+                     logging.info(f"Upserted batch {i // batch_size + 1}/{(len(data_to_upsert) + batch_size - 1) // batch_size}")
+                 logging.info("Data upsert complete.")
+                 st.success("Mental health data uploaded to Pinecone index.")
+            elif index_stats.total_vector_count > 0:
+                 logging.info(f"Index already contains {index_stats.total_vector_count} vectors. Skipping upsert.")
+                 st.info(f"Pinecone index already contains {index_stats.total_vector_count} vectors. Data upsert skipped.")
+            else:
+                logging.warning("No documents to upsert and index is empty.")
+                st.warning("No mental health data found to upload to Pinecone. RAG functionality may be limited.")
+
+
+        except Exception as e:
+            logging.error(f"Error during Pinecone upsert or describing index: {e}")
+            st.error(f"Error during Pinecone data upload: {e}")
+            # Continue with the index connection even if upsert failed, retrieval might still work if data exists
+            pass
 
 
         return index
 
     except Exception as e:
-        logging.error(f"Error setting up Pinecone or upserting data: {e}")
+        logging.error(f"An unexpected error occurred during Pinecone setup: {e}")
+        st.error(f"An unexpected error occurred during Pinecone setup: {e}")
         return None # Return None if setup fails
 
 # Load documents and setup Pinecone (including upsert if needed)
 # In a real application, consider running upsert as a separate process.
 # For this consolidated app, we'll load docs and then setup/upsert Pinecone.
-mental_health_documents = load_and_preprocess_data("mental_health_data")
-index = setup_pinecone_and_upsert(mental_health_documents, embedding_model)
+# Adding a spinner while loading and setting up Pinecone
+with st.spinner("Setting up Pinecone vector database..."):
+    mental_health_documents = load_and_preprocess_data("mental_health_data")
+    index = setup_pinecone_and_upsert(mental_health_documents, embedding_model)
 
 
 if index is None:
-    st.error("Could not set up Pinecone index or upsert data. Please check your API key, environment, and data.")
-    st.stop()
+    st.error("Pinecone setup failed. Please check the error messages above and your configuration.")
+    st.stop() # Stop the Streamlit application if Pinecone setup failed
+else:
+    st.success("Pinecone vector database ready.") # Indicate successful setup
+
 
 # --- Implement the retrieval mechanism ---
 def retrieve_info(query, _index, _embedding_model, top_k=3):
@@ -176,8 +229,13 @@ def retrieve_info(query, _index, _embedding_model, top_k=3):
 
         return retrieved_documents
 
+    except GRPCStatusError as e:
+         logging.error(f"Pinecone GRPC error during retrieval: {e.details}")
+         st.warning(f"Retrieval error: {e.details}. Pinecone might be unavailable or misconfigured.")
+         return []
     except Exception as e:
         logging.error(f"Error during information retrieval: {e}")
+        st.warning(f"An error occurred during information retrieval: {e}")
         return []
 
 
@@ -199,7 +257,7 @@ sentiment_analyzer = load_sentiment_analyzer()
 
 if sentiment_analyzer is None:
     st.error("Could not load the sentiment analysis model. Please check your setup.")
-    st.stop()
+    st.stop() # Stop the application if models failed to load
 
 
 # Cache the text generation model
@@ -219,7 +277,7 @@ text_generator = load_text_generator()
 
 if text_generator is None:
     st.error("Could not load the text generation model. Please check your setup.")
-    st.stop()
+    st.stop() # Stop the application if models failed to load
 
 
 def generate_response(user_input, history=None, retrieved_info=None):
@@ -299,13 +357,13 @@ def generate_response(user_input, history=None, retrieved_info=None):
         return "I'm sorry, I encountered an error while generating a response. Could you please rephrase that?", history # Return a graceful error message
 
 
-def assess_severity(user_input):
+def assess_severity(user_input, _sentiment_analyzer):
     """
     Assesses the severity of the user's mental health state based on input text.
     Enhanced to be more sensitive to high severity keywords.
     """
     # Assuming sentiment_analyzer is loaded and available globally or via st.cache_resource
-    if sentiment_analyzer is None: # Added check
+    if _sentiment_analyzer is None: # Added check
         logging.warning("Sentiment analyzer not loaded, cannot assess severity.") # Added logging
         return 'low' # Cannot assess if analyzer not loaded
 
@@ -323,7 +381,7 @@ def assess_severity(user_input):
 
     try:
         # Perform sentiment analysis only if no high severity keywords are found
-        sentiment_result = sentiment_analyzer(user_input)[0]
+        sentiment_result = _sentiment_analyzer(user_input)[0]
         sentiment_score = sentiment_result['score']
         sentiment_label = sentiment_result['label']
 
@@ -389,7 +447,7 @@ if prompt := st.chat_input("What is on your mind today?"):
         st.markdown(prompt)
 
     # Assess the severity of the user's input immediately
-    severity = assess_severity(prompt,_sentiment_analyzer)
+    severity = assess_severity(prompt,sentiment_analyzer) # Pass sentiment_analyzer
 
     # Handle high severity input specifically
     if severity == 'high':
@@ -404,7 +462,7 @@ if prompt := st.chat_input("What is on your mind today?"):
             with st.spinner("Thinking..."):
                 # --- RAG Integration ---
                 # Retrieve relevant information based on the user's prompt
-                # Pass _index and _embedding_model to retrieve_info
+                # Pass index and embedding_model to retrieve_info
                 retrieved_docs = retrieve_info(prompt, index, embedding_model)
                 if retrieved_docs:
                     logging.info(f"Retrieved {len(retrieved_docs)} documents.")

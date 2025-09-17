@@ -3,7 +3,8 @@
 import streamlit as st
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM # Import necessary classes
 from sentence_transformers import SentenceTransformer
-from pinecone import Pinecone, ServerlessSpec, GRPCStatusError # Import GRPCStatusError for specific handling
+from pinecone import Pinecone, ServerlessSpec # Import Pinecone and ServerlessSpec
+from pinecone.core.grpc.exceptions import GRPCStatusError # Import GRPCStatusError from the correct module
 import os
 import glob
 import re

@@ -55,17 +55,19 @@ def generate_response(user_input, history=None):
         # Adjust max_length and generation parameters for GPT-2
         generated_sequence = text_generator(
             full_input,
-            max_length=len(full_input) + 150,  # Increased generated tokens
+            max_length=len(full_input) + 200,  # Increased generated tokens further
             # GPT-2 does not have a dedicated pad_token_id like DialoGPT,
             # but the pipeline handles padding implicitly.
             # We can set the eos_token_id to stop generation after a complete response.
             eos_token_id=text_generator.tokenizer.eos_token_id, # Use EOS token to stop generation
             do_sample=True,
-            top_k=60, # Increased top_k
+            top_k=70, # Increased top_k
             top_p=0.95,
-            temperature=0.8, # Increased temperature for more randomness
+            temperature=0.9, # Increased temperature for more randomness
             num_return_sequences=1,
             truncation=True # Truncate input if it's too long
+            # Add repetition penalty if supported and needed
+            # repetition_penalty=1.2 # Uncomment and adjust if needed and supported
         )
 
         generated_text = generated_sequence[0]['generated_text']

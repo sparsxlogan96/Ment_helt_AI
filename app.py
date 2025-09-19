@@ -205,7 +205,7 @@ def generate_response(user_input, history=None, retrieved_info=None):
         # Adjust max_length and generation parameters for GPT-2
         generated_sequence = text_generator(
             full_input,
-            max_length=len(full_input) + 200,  # Generate up to 200 new tokens
+            max_length=len(full_input) + 1000,  # Generate up to 1000 new tokens
             eos_token_id=text_generator.tokenizer.eos_token_id, # Use EOS token to stop generation
             do_sample=True,
             top_k=70,

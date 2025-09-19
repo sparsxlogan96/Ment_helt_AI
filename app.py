@@ -4,6 +4,7 @@ import logging
 import re
 import faiss
 import numpy as np
+import glob
 from sentence_transformers import SentenceTransformer
 import os # Import os for file paths
 
@@ -385,3 +386,4 @@ if prompt := st.chat_input("What is on your mind today?"):
 #    in the same directory as the app.py file.
 # 3. Open your terminal in that directory.
 # 4. Run the command: `streamlit run app.py`
+

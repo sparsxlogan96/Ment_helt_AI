@@ -11,8 +11,8 @@ logging.basicConfig(level=logging.INFO)
 def load_models():
     """Loads the text generation and sentiment analysis models."""
     try:
-        # Using a smaller model for potentially faster responses in deployment
-        text_generator = pipeline("text-generation", model="microsoft/DialoGPT-small")
+        # Changed model to gpt2-medium as requested
+        text_generator = pipeline("text-generation", model="gpt2-medium")
         sentiment_analyzer = pipeline("sentiment-analysis")
         logging.info("Models loaded successfully.")
         return text_generator, sentiment_analyzer
@@ -44,17 +44,22 @@ def generate_response(user_input, history=None):
         history = ""
 
     # Construct the input prompt for the LLM
-    prompt_parts = []
-    prompt_parts.append(history)
-    prompt_parts.append("User: " + text_generator.tokenizer.eos_token + user_input + text_generator.tokenizer.eos_token) # Add current user input with EOS tokens
-
-    full_input = "".join(prompt_parts)
+    # For GPT-2, we can simply append the user input to the history.
+    # GPT-2 does not use a specific EOS token for turns like DialoGPT
+    # but we can still use it to mark the end of the input if desired,
+    # although it's less critical than for DialoGPT's conversational structure.
+    # Let's stick to simple concatenation for GPT-2 unless specific fine-tuning was done.
+    full_input = history + "User: " + user_input + "\nBot:" # Simple turn-based format
 
     try:
+        # Adjust max_length and generation parameters for GPT-2
         generated_sequence = text_generator(
             full_input,
             max_length=len(full_input) + 100,  # Generate up to 100 new tokens
-            pad_token_id=text_generator.tokenizer.eos_token_id,
+            # GPT-2 does not have a dedicated pad_token_id like DialoGPT,
+            # but the pipeline handles padding implicitly.
+            # We can set the eos_token_id to stop generation after a complete response.
+            eos_token_id=text_generator.tokenizer.eos_token_id, # Use EOS token to stop generation
             do_sample=True,
             top_k=50,
             top_p=0.95,
@@ -65,11 +70,22 @@ def generate_response(user_input, history=None):
 
         generated_text = generated_sequence[0]['generated_text']
 
-        # Extract the generated text that comes AFTER the user's input in the generated sequence.
-        # This is the bot's response.
-        # A robust way for DialoGPT is to find the content after the last EOS token that was part of the input.
-        response_start_index = generated_text.rfind(text_generator.tokenizer.eos_token, 0, len(full_input)) + len(text_generator.tokenizer.eos_token)
+        # Extract the generated text that comes AFTER our input prompt ("\nBot:")
+        # Find the index where the generated text starts after the prompt
+        response_start_marker = "\nBot:"
+        response_start_index = generated_text.find(response_start_marker, len(full_input) - len(response_start_marker)) + len(response_start_marker)
         response = generated_text[response_start_index:].strip()
+
+        # Further truncate response if it contains unintended subsequent turns or long generated text
+        # Look for common turn-ending patterns like "User:" or "Bot:"
+        turn_end_markers = ["\nUser:", "\nBot:"]
+        shortest_end_index = len(response)
+        for marker in turn_end_markers:
+             marker_index = response.find(marker)
+             if marker_index != -1 and marker_index < shortest_end_index:
+                 shortest_end_index = marker_index
+
+        response = response[:shortest_end_index].strip()
 
 
         # Basic safety check on the generated response
@@ -80,8 +96,9 @@ def generate_response(user_input, history=None):
             # In a real application, you might want more sophisticated filtering or moderation
 
         # Update history for the next turn
-        # Append the user input and the generated response to the history
-        updated_history = history + "User: " + user_input + text_generator.tokenizer.eos_token + "Bot: " + response + text_generator.tokenizer.eos_token
+        # Append the user input and the generated response to the history in the new format
+        updated_history = full_input + response + "\n" # Add the generated response and a newline
+
 
         return response, updated_history
 

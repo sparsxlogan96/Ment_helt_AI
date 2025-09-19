@@ -4,9 +4,10 @@ import logging
 import re
 import faiss
 import numpy as np
-import glob
 from sentence_transformers import SentenceTransformer
-import os # Import os for file paths
+import os
+import glob # Import glob for file searching
+
 
 # Configure logging (optional, but good practice)
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +18,8 @@ logging.basicConfig(level=logging.INFO)
 def load_models():
     """Loads the text generation and sentiment analysis models."""
     try:
-        text_generator = pipeline("text-generation", model="microsoft/DialoGPT-small")
+        # Using gpt2-medium as requested by the user
+        text_generator = pipeline("text-generation", model="gpt2-medium")
         sentiment_analyzer = pipeline("sentiment-analysis")
         logging.info("Models loaded successfully.")
         return text_generator, sentiment_analyzer
@@ -98,7 +100,7 @@ def setup_faiss_index(_documents, _embedding_model):
     """Creates and populates a FAISS index from documents and embeddings."""
     if not _documents or _embedding_model is None:
         logging.warning("No documents or embedding model available to create FAISS index.")
-        return None # Return None for index
+        return None
 
     try:
         logging.info(f"Generating embeddings for {len(_documents)} documents for FAISS index...")
@@ -116,11 +118,9 @@ def setup_faiss_index(_documents, _embedding_model):
 
     except Exception as e:
         logging.error(f"Error setting up FAISS index: {e}")
-        return None # Return None if setup fails
+        return None
 
 
-# Setup FAISS index (requires documents and embedding model)
-# Adding a spinner while setting up FAISS
 with st.spinner("Setting up local FAISS vector database..."):
     faiss_index = setup_faiss_index(mental_health_documents, embedding_model)
 
@@ -147,6 +147,7 @@ def retrieve_info_local(query, index, embedding_model, documents, top_k=3):
 
         retrieved_documents = []
         for doc_idx in indices[0]:
+            # Ensure the index is valid before retrieving the document
             if 0 <= doc_idx < len(documents):
                 retrieved_documents.append(documents[doc_idx])
             else:
@@ -191,42 +192,49 @@ def generate_response(user_input, history=None, retrieved_info=None):
         prompt_parts.append("\nBased on the above information and our conversation:")
 
     # Add conversation history and current user input
-    # Using the "User: ... Bot: ..." format that DialoGPT understands
-    formatted_history = history.strip() + text_generator.tokenizer.eos_token if history else ""
-
-    prompt_parts.append(formatted_history)
-    prompt_parts.append("User: " + user_input + text_generator.tokenizer.eos_token)
-    prompt_parts.append("Bot: ") # Marker for bot's turn
+    # Using a more explicit turn-based format for GPT-2
+    formatted_history = history.strip()
+    if formatted_history:
+        prompt_parts.append(formatted_history)
+    prompt_parts.append("\nUser: " + user_input + "\nBot:")
 
 
     full_input = "".join(prompt_parts)
 
     try:
+        # Adjust max_length and generation parameters for GPT-2
         generated_sequence = text_generator(
             full_input,
-            max_length=len(full_input) + 150,  # Generate up to 150 new tokens
-            pad_token_id=text_generator.tokenizer.eos_token_id,
+            max_length=len(full_input) + 200,  # Generate up to 200 new tokens
+            eos_token_id=text_generator.tokenizer.eos_token_id, # Use EOS token to stop generation
             do_sample=True,
-            top_k=50,
+            top_k=70,
             top_p=0.95,
-            temperature=0.8,
+            temperature=0.9,
             num_return_sequences=1,
             truncation=True
         )
 
         generated_text = generated_sequence[0]['generated_text']
 
-        # Extract the generated text that comes AFTER the last "Bot: " marker
-        bot_marker = "Bot: "
-        response_start_index = generated_text.rfind(bot_marker, 0, len(full_input)) + len(bot_marker)
+        # Extract the generated text that comes AFTER our input prompt ("\nBot:")
+        # Find the index where the generated text starts after the prompt
+        response_start_marker = "\nBot:"
+        # Find the last occurrence of the bot marker that is within or immediately after the full input length
+        # This is a heuristic to avoid matching 'Bot:' if the model generates it internally in its response
+        response_start_index = generated_text.rfind(response_start_marker, max(0, len(full_input) - len(response_start_marker) - 5), len(full_input)) + len(response_start_marker)
+
+
         response = generated_text[response_start_index:].strip()
 
-        # Clean up the extracted response
-        response = response.replace(text_generator.tokenizer.eos_token, "").strip()
-        turn_end_markers = ["User:", "Bot:"]
+        # Further truncate response if it contains unintended subsequent turns or long generated text
+        # Look for common turn-ending patterns like "User:" or "Bot:"
+        turn_end_markers = ["\nUser:", "\nBot:"]
         shortest_end_index = len(response)
         for marker in turn_end_markers:
              marker_index = response.find(marker)
+             # Ensure the marker is not just part of a sentence (e.g., "The user: ...")
+             # Simple check: marker should be at the beginning of a line or preceded by a space
              if marker_index != -1 and (marker_index == 0 or response[marker_index-1].isspace()):
                  if marker_index < shortest_end_index:
                      shortest_end_index = marker_index
@@ -239,7 +247,9 @@ def generate_response(user_input, history=None, retrieved_info=None):
             response = "I'm here to support you. Remember, if you are having thoughts of harming yourself, please reach out to a crisis hotline or mental health professional immediately."
 
         # Update history
-        updated_history = history + "User: " + user_input + text_generator.tokenizer.eos_token + "Bot: " + response + text_generator.tokenizer.eos_token
+        # Append the user input and the generated response to the history in the new format
+        updated_history = full_input + response # Append the generated response to the full input
+
 
         return response, updated_history
 
@@ -299,7 +309,7 @@ def provide_recommendations(severity_level):
 
 # --- Streamlit UI ---
 
-st.title("Mental Health Support AI Agent (Local RAG Enabled)") # Updated title for local RAG
+st.title("Mental Health Support AI Agent (Local RAG Enabled)")
 
 # Add a prominent disclaimer
 st.warning("""
@@ -321,16 +331,12 @@ for message in st.session_state.messages:
 
 # Accept user input
 if prompt := st.chat_input("What is on your mind today?"):
-    # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
-    # Display user message in chat message container
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Assess the severity of the user's input immediately
-    severity = assess_severity(prompt, sentiment_analyzer) # Pass sentiment_analyzer
+    severity = assess_severity(prompt, sentiment_analyzer)
 
-    # Handle high severity input specifically
     if severity == 'high':
         recommendations = provide_recommendations(severity)
         full_response = "Your input indicates a high level of distress. " + recommendations
@@ -338,47 +344,72 @@ if prompt := st.chat_input("What is on your mind today?"):
             st.markdown(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response})
     else:
-        # Process normal input
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 # --- Local RAG Logic (using FAISS) ---
                 retrieved_docs = []
-                # Check if FAISS index, embedding model, and documents are available
                 if faiss_index is not None and embedding_model is not None and mental_health_documents:
-                     # Retrieve relevant information from the FAISS index
                      retrieved_docs = retrieve_info_local(prompt, faiss_index, embedding_model, mental_health_documents)
                      if retrieved_docs:
                          logging.info(f"Retrieved {len(retrieved_docs)} documents from FAISS.")
-                         # Optional: Display retrieved docs for debugging
-                         # st.write("Retrieved Info:")
-                         # for doc in retrieved_docs:
-                         #      st.write(f"- {doc[:100]}...") # Display first 100 chars
                      else:
                          logging.info("No relevant documents retrieved from FAISS.")
                 else:
                     logging.warning("FAISS index, embedding model, or documents not available. Skipping RAG retrieval.")
 
-
-                # Generate response using the LLM, incorporating retrieved information
                 response_text, st.session_state.conversation_history = generate_response(
                     prompt,
                     st.session_state.conversation_history,
-                    retrieved_info=retrieved_docs # Pass retrieved documents to generate_response
+                    retrieved_info=retrieved_docs
                 )
 
-                # Provide recommendations based on severity (already assessed)
                 recommendations = provide_recommendations(severity)
 
-                # Combine response and recommendations ONLY if severity is not low
                 if severity != 'low':
                      full_response = response_text + "\n\n" + recommendations
                 else:
-                     full_response = response_text # For low severity, just the generated response
+                     full_response = response_text
 
                 st.markdown(full_response)
 
-        # Add assistant's full response (including recommendations) to chat history
         st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+# --- Documentation of Ethical Considerations with Local FAISS ---
+
+# 1. Data Privacy and Security:
+#    - With a local FAISS index, the vector database is stored locally on the machine running the Streamlit application.
+#    - **New Consideration:** The security of the user's data (conversation history, which is used to build the RAG prompt) and the local vector store (containing embeddings of mental health data) is now dependent on the security of the local machine/environment where the application is deployed.
+#    - In a multi-user or cloud deployment scenario where the application is run on a server, appropriate access controls and server-level security measures are crucial to protect the local data files.
+#    - If the application is run by an individual user on their personal machine, the privacy is generally higher as data doesn't leave their device, but local machine security is paramount.
+#    - The principle of not storing user data beyond the session remains, which helps mitigate long-term privacy risks regardless of local vs. cloud storage of the *knowledge base*.
+
+# 2. Model Bias:
+#    - The LLM and embedding model biases remain the same as they are loaded models, not specific to the vector store type.
+#    - Bias in the *source documents* used to build the FAISS index can directly impact the RAG output. If the mental health data is biased, the retrieved context will be biased, potentially leading to biased responses.
+#    - **Adjustment Needed:** Careful curation and review of the local mental health data files are essential to minimize bias in the knowledge base.
+
+# 3. Limitations of AI in Mental Health:
+#    - These limitations are inherent to the AI models and the nature of AI support, and are not directly changed by using a local vector store.
+#    - The disclaimer remains critical and its prominence in the UI is confirmed.
+
+# 4. Handling High-Severity Situations:
+#    - The keyword-based safety check in `generate_response` and the crisis hotline recommendations for 'high' severity are confirmed to be integrated and functional in the code.
+#    - The mechanism for identifying high severity is based on sentiment analysis and keyword matching on the user's input, which is independent of the vector store.
+#    - The local FAISS index does not directly participate in the high-severity detection or crisis recommendation logic itself, but it provides context that *might* influence the LLM's response in non-crisis scenarios.
+
+# 5. Transparency and Explainability:
+#    - Transparency about the AI nature and limitations remains important, as addressed by the disclaimer.
+#    - The RAG approach (local or cloud) can potentially improve explainability by allowing inspection of the retrieved documents, although this is not currently exposed in the UI.
+
+# 6. Potential for Misuse or Dependence:
+#    - This risk is related to user behavior and the agent's conversational style, not directly to the vector store location.
+
+# 7. Continuous Monitoring and Improvement:
+#    - Monitoring of conversation logs (if implemented) and user feedback is still necessary, and these logs would be stored locally if not sent elsewhere.
+#    - Refinements to the RAG system (embedding model, retrieval parameters, source data) are ongoing needs.
+
+# --- Summary of Ethical Considerations with Local FAISS ---
+# The main ethical impact of switching to a local FAISS index is the shift in data security responsibility to the deployment environment. The security of the local machine or server running the application is paramount for protecting the knowledge base data. Bias in the source documents for the local index becomes a direct concern for RAG output bias. Existing safeguards like the disclaimer, safety keywords, and crisis recommendations remain integrated and crucial.
 
 # Note: To run this Streamlit application locally:
 # 1. Save this code as a .py file (e.g., app.py).
@@ -386,4 +417,3 @@ if prompt := st.chat_input("What is on your mind today?"):
 #    in the same directory as the app.py file.
 # 3. Open your terminal in that directory.
 # 4. Run the command: `streamlit run app.py`
-

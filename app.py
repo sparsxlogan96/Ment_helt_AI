@@ -163,9 +163,10 @@ def provide_recommendations(severity_level):
     if severity_level == 'high':
         return "Your situation sounds serious. Please seek immediate professional help or contact a crisis hotline. **You can call the National Suicide Prevention Lifeline at 988 or text HOME to 741741 to reach the Crisis Text Line.** Your safety is the top priority."
     elif severity_level == 'medium':
-        return "It sounds like you are going through a challenging time. Talking to a counselor or therapist could be helpful. You can look for mental health professionals in your area or explore online therapy options."
+    # Modified recommendation for medium severity to be slightly less strong for better flow
+        return "It sounds like you are going through a challenging time. Talking to someone or exploring resources might be helpful."
     else: # severity_level == 'low'
-        return "It's good that you are reaching out. For low severity concerns, focusing on self-care can be beneficial. Try practicing mindfulness, getting enough sleep, exercising, and connecting with friends and family."
+        return "It's good that you are reaching out. Focusing on self-care can be beneficial. Try practicing mindfulness, getting enough sleep, exercising, and connecting with friends and family."
 
 
 # --- Streamlit UI ---
@@ -221,12 +222,11 @@ if prompt := st.chat_input("What is on your mind today?"):
                 # Provide recommendations based on severity (already assessed)
                 recommendations = provide_recommendations(severity)
 
-                # Combine response and recommendations (can refine how this is presented)
-                # Only add recommendations if not low severity, or always add based on design choice
+                # Combine response and recommendations ONLY if severity is not low
                 if severity != 'low':
                      full_response = response_text + "\n\n" + recommendations
                 else:
-                     full_response = response_text # Don't clutter low severity with recommendations every time
+                     full_response = response_text # For low severity, just the generated response
 
                 st.markdown(full_response)
 

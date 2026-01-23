@@ -56,7 +56,13 @@ def create_virtual_environment():
 
 def install_dependencies():
     """Install required dependencies."""
-    pip_command = "venv/bin/pip" if os.path.exists("venv/bin/pip") else "pip"
+    import platform
+    
+    # Determine the correct path based on OS
+    if platform.system() == "Windows":
+        pip_command = "venv\\Scripts\\pip.exe" if os.path.exists("venv\\Scripts\\pip.exe") else "pip"
+    else:
+        pip_command = "venv/bin/pip" if os.path.exists("venv/bin/pip") else "pip"
     
     commands = [
         (f"{pip_command} install --upgrade pip", "Upgrading pip"),
@@ -72,7 +78,13 @@ def install_dependencies():
 
 def verify_installation():
     """Verify that key packages are installed."""
-    python_command = "venv/bin/python" if os.path.exists("venv/bin/python") else sys.executable
+    import platform
+    
+    # Determine the correct Python path based on OS
+    if platform.system() == "Windows":
+        python_command = "venv\\Scripts\\python.exe" if os.path.exists("venv\\Scripts\\python.exe") else sys.executable
+    else:
+        python_command = "venv/bin/python" if os.path.exists("venv/bin/python") else sys.executable
     
     packages = ["streamlit", "transformers", "torch", "faiss"]
     

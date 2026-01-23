@@ -1,37 +1,177 @@
-# Ment_helt_AI
-# --- Documentation of Ethical Considerations with Local FAISS ---
+# Ment_helt_AI 🧠
 
-# 1. Data Privacy and Security:
-#    - With a local FAISS index, the vector database is stored locally on the machine running the Streamlit application.
-#    - **New Consideration:** The security of the user's data (conversation history, which is used to build the RAG prompt) and the local vector store (containing embeddings of mental health data) is now dependent on the security of the local machine/environment where the application is deployed.
-#    - In a multi-user or cloud deployment scenario where the application is run on a server, appropriate access controls and server-level security measures are crucial to protect the local data files.
-#    - If the application is run by an individual user on their personal machine, the privacy is generally higher as data doesn't leave their device, but local machine security is paramount.
-#    - The principle of not storing user data beyond the session remains, which helps mitigate long-term privacy risks regardless of local vs. cloud storage of the *knowledge base*.
+AI-powered Mental Health Support Chatbot with Retrieval-Augmented Generation (RAG)
 
-# 2. Model Bias:
-#    - The LLM and embedding model biases remain the same as they are loaded models, not specific to the vector store type.
-#    - Bias in the *source documents* used to build the FAISS index can directly impact the RAG output. If the mental health data is biased, the retrieved context will be biased, potentially leading to biased responses.
-#    - **Adjustment Needed:** Careful curation and review of the local mental health data files are essential to minimize bias in the knowledge base.
+## Overview
 
-# 3. Limitations of AI in Mental Health:
-#    - These limitations are inherent to the AI models and the nature of AI support, and are not directly changed by using a local vector store.
-#    - The disclaimer remains critical and its prominence in the UI is confirmed.
+This project provides a conversational AI agent designed to offer supportive interactions for mental health topics. It uses:
 
-# 4. Handling High-Severity Situations:
-#    - The keyword-based safety check in `generate_response` and the crisis hotline recommendations for 'high' severity are confirmed to be integrated and functional in the code.
-#    - The mechanism for identifying high severity is based on sentiment analysis and keyword matching on the user's input, which is independent of the vector store.
-#    - The local FAISS index does not directly participate in the high-severity detection or crisis recommendation logic itself, but it provides context that *might* influence the LLM's response in non-crisis scenarios.
+- **GPT-2 Medium** for natural language generation
+- **Local FAISS Vector Database** for retrieving relevant mental health information
+- **Sentiment Analysis** for assessing user emotional state
+- **Safety Features** including crisis detection and hotline recommendations
+- **Streamlit** for an intuitive web interface
 
-# 5. Transparency and Explainability:
-#    - Transparency about the AI nature and limitations remains important, as addressed by the disclaimer.
-#    - The RAG approach (local or cloud) can potentially improve explainability by allowing inspection of the retrieved documents, although this is not currently exposed in the UI.
+⚠️ **Important**: This is a supportive tool, NOT a replacement for professional mental health care.
 
-# 6. Potential for Misuse or Dependence:
-#    - This risk is related to user behavior and the agent's conversational style, not directly to the vector store location.
+## Quick Start
 
-# 7. Continuous Monitoring and Improvement:
-#    - Monitoring of conversation logs (if implemented) and user feedback is still necessary, and these logs would be stored locally if not sent elsewhere.
-#    - Refinements to the RAG system (embedding model, retrieval parameters, source data) are ongoing needs.
+### For PyCharm Users 🚀
 
-# --- Summary of Ethical Considerations with Local FAISS ---
-# The main ethical impact of switching to a local FAISS index is the shift in data security responsibility to the deployment environment. The security of the local machine or server running the application is paramount for protecting the knowledge base data. Bias in the source documents for the local index becomes a direct concern for RAG output bias. Existing safeguards like the disclaimer, safety keywords, and crisis recommendations remain integrated and crucial.
+If you're using PyCharm IDE, we've set up everything you need! See the [**PyCharm Development Guide**](PYCHARM_GUIDE.md) for detailed instructions.
+
+**TL;DR:**
+1. Open the project in PyCharm
+2. Run: `python setup.py`
+3. Configure the Python interpreter (Settings > Project > Python Interpreter)
+4. Click the green play button with "Streamlit App (module)" selected
+
+### Standard Setup
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/sparsxlogan96/Ment_helt_AI.git
+   cd Ment_helt_AI
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Run the application**:
+   ```bash
+   streamlit run app.py
+   ```
+
+4. **Open your browser** to http://localhost:8501
+
+## Features
+
+✅ **Conversational AI** - Natural dialogue using GPT-2  
+✅ **RAG System** - Retrieves relevant mental health information from local knowledge base  
+✅ **Sentiment Analysis** - Detects emotional state and adjusts responses  
+✅ **Crisis Detection** - Identifies high-risk situations and provides crisis resources  
+✅ **Privacy-First** - All data processing happens locally, no conversation data stored  
+✅ **Customizable** - Fine-tune the model on your own mental health datasets  
+
+## Project Structure
+
+```
+Ment_helt_AI/
+├── .idea/                    # PyCharm configuration (auto-setup)
+├── mental_health_data/       # Knowledge base for RAG
+│   ├── anxiety.txt
+│   ├── cbt_basics.txt
+│   └── depression.txt
+├── app.py                    # Main Streamlit application
+├── fine_tune_gpt2.py        # Model fine-tuning script
+├── setup.py                  # Development environment setup
+├── requirements.txt          # Python dependencies
+├── PYCHARM_GUIDE.md         # Detailed PyCharm setup guide
+└── README.md                 # This file
+```
+
+## Customizing the Model
+
+### Fine-Tuning GPT-2
+
+Want to create your own custom GPT model trained on mental health data?
+
+```bash
+python fine_tune_gpt2.py \
+  --data-dir mental_health_data \
+  --output-dir ./fine_tuned_model \
+  --epochs 5
+```
+
+Then update `app.py` to use your fine-tuned model:
+
+```python
+@st.cache_resource
+def load_models():
+    text_generator = pipeline("text-generation", model="./fine_tuned_model")
+    sentiment_analyzer = pipeline("sentiment-analysis")
+    return text_generator, sentiment_analyzer
+```
+
+See [PYCHARM_GUIDE.md](PYCHARM_GUIDE.md) for detailed instructions.
+
+## Technologies Used
+
+- **Streamlit** - Web interface
+- **Transformers (Hugging Face)** - GPT-2 and sentiment analysis models
+- **FAISS** - Vector similarity search for RAG
+- **Sentence Transformers** - Text embeddings
+- **PyTorch** - Deep learning framework
+
+## Development
+
+### Running Tests
+
+```bash
+# Coming soon - test infrastructure
+```
+
+### Code Quality
+
+The project includes PyCharm inspection profiles for:
+- PEP 8 compliance
+- Type hints
+- Code quality checks
+
+## Ethical Considerations
+
+### Data Privacy and Security
+- Local FAISS index stores all data on your machine
+- No user conversations are stored beyond the session
+- All processing happens locally - no data sent to external servers
+- In deployment, server security is critical for protecting data
+
+### Model Bias
+- AI models may reflect biases in training data
+- Mental health data should be carefully curated
+- Responses should be reviewed for potential bias
+
+### Limitations
+- This is NOT a substitute for professional mental health care
+- AI cannot provide diagnosis or treatment
+- Crisis situations require human intervention
+
+### Safety Features
+- Keyword-based crisis detection
+- Automatic crisis hotline recommendations
+- Clear disclaimers about AI limitations
+
+For full ethical considerations, see the comments in `app.py`.
+
+## Crisis Resources
+
+If you or someone you know is in crisis:
+
+- **National Suicide Prevention Lifeline**: Call or text **988**
+- **Crisis Text Line**: Text **HOME** to **741741**
+- **International Association for Suicide Prevention**: https://www.iasp.info/resources/Crisis_Centres/
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## License
+
+This project is provided for educational and research purposes.
+
+## Acknowledgments
+
+- Mental health data sourced from public health resources
+- Built with Hugging Face Transformers and Streamlit
+- Community feedback and contributions
+
+---
+
+**Remember**: If you're experiencing a mental health crisis, please contact a professional or crisis hotline immediately. This AI is a supportive tool, not a replacement for professional care.
